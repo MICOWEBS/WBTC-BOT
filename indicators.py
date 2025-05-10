@@ -5,6 +5,55 @@ from binance.exceptions import BinanceAPIException
 import logging
 import config
 
+# Module-level functions for direct import
+def calculate_rsi(prices, period=14):
+    """Calculate RSI indicator from a list of prices."""
+    if len(prices) < period + 1:
+        return 50  # Default to neutral if not enough data
+    
+    # Calculate price changes
+    deltas = np.diff(prices)
+    seed = deltas[:period+1]
+    up = seed[seed >= 0].sum()/period
+    down = -seed[seed < 0].sum()/period
+    
+    if down == 0:  # Handle division by zero
+        return 100
+    
+    rs = up/down
+    rsi = 100. - 100./(1. + rs)
+    
+    # For longer price arrays, calculate the full RSI series
+    if len(prices) > period + 1:
+        for i in range(period+1, len(prices)):
+            delta = deltas[i-1]
+            
+            if delta > 0:
+                up_val = delta
+                down_val = 0
+            else:
+                up_val = 0
+                down_val = -delta
+                
+            up = (up * (period - 1) + up_val) / period
+            down = (down * (period - 1) + down_val) / period
+            
+            if down == 0:
+                rs = float('inf')
+            else:
+                rs = up/down
+            
+            rsi = 100. - 100./(1. + rs)
+    
+    return rsi
+
+def calculate_ema(prices, period=20):
+    """Calculate EMA indicator from a list of prices."""
+    if len(prices) < period:
+        return prices[-1] if len(prices) > 0 else 0
+    
+    return pd.Series(prices).ewm(span=period, adjust=False).mean().iloc[-1]
+
 class TechnicalIndicators:
     def __init__(self, api_key, api_secret):
         self.client = Client(api_key, api_secret)
