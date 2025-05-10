@@ -179,31 +179,31 @@ async def fetch_binance_data():
                 return await fetch_fallback_data()
         
         try:
-        # Get klines (candlestick data) for technical indicators
-        klines = await binance_client.get_klines(
-            symbol=TRADING_PAIR, 
-            interval=AsyncClient.KLINE_INTERVAL_5MINUTE,
-            limit=50  # Get enough data to calculate RSI and EMA
-        )
-        
-        # Extract close prices
-        close_prices = [float(k[4]) for k in klines]
-        
-        # Calculate indicators
-        current_price = close_prices[-1]
-        rsi_value = calculate_rsi(close_prices, RSI_PERIODS)
-        ema_value = calculate_ema(close_prices, EMA_PERIODS)
-        
-        # Update cache
-        last_binance_data = {
-            "price": current_price,
-            "rsi": rsi_value,
-            "ema": ema_value,
-            "last_updated": datetime.now().isoformat()
-        }
-        
-        logger.info(f"Binance data updated: Price=${current_price}, RSI={rsi_value:.2f}, EMA=${ema_value:.2f}")
-        return last_binance_data
+            # Get klines (candlestick data) for technical indicators
+            klines = await binance_client.get_klines(
+                symbol=TRADING_PAIR, 
+                interval=AsyncClient.KLINE_INTERVAL_5MINUTE,
+                limit=50  # Get enough data to calculate RSI and EMA
+            )
+            
+            # Extract close prices
+            close_prices = [float(k[4]) for k in klines]
+            
+            # Calculate indicators
+            current_price = close_prices[-1]
+            rsi_value = calculate_rsi(close_prices, RSI_PERIODS)
+            ema_value = calculate_ema(close_prices, EMA_PERIODS)
+            
+            # Update cache
+            last_binance_data = {
+                "price": current_price,
+                "rsi": rsi_value,
+                "ema": ema_value,
+                "last_updated": datetime.now().isoformat()
+            }
+            
+            logger.info(f"Binance data updated: Price=${current_price}, RSI={rsi_value:.2f}, EMA=${ema_value:.2f}")
+            return last_binance_data
         except Exception as binance_error:
             logger.error(f"Error fetching from Binance API: {str(binance_error)}")
             return await fetch_fallback_data()
@@ -303,77 +303,77 @@ def last_signal_was_buy():
 async def send_telegram_notification(signal_data: SignalData):
     # Create a new session for each notification
     async with aiohttp.ClientSession() as session:
-    try:
-        # Your Telegram API key and chat ID from environment variables
-        telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
-        
-        if not telegram_bot_token or not telegram_chat_id:
-            logger.warning("Telegram credentials not configured")
-            return {
-                "success": False,
-                "message": "Telegram credentials not configured"
-            }
-        
-        # Helper functions for message formatting
-        def get_signal_emoji(signal_type):
-            signal_type = signal_type.upper() if signal_type else ""
-            if signal_type == 'BUY':
-                return '🟢 💰 BUY SIGNAL'
-            elif signal_type == 'SELL':
-                return '🔴 💸 SELL SIGNAL'
-            elif signal_type == 'HOLD':
-                return '🟡 🔒 HOLD SIGNAL'
-            else:
-                return '⚪ ⏳ WAITING'
-        
-        def get_price_action(s):
-            if s > 0:
-                return f'📈 +{s:.2f}%'
-            elif s < 0:
-                return f'📉 {s:.2f}%'
-            else:
-                return f'➖ {s:.2f}%'
-        
-        def get_rsi_status(rsi_value):
-            if rsi_value <= 30:
-                return '🟢 Oversold'
-            elif rsi_value >= 70:
-                return '🔴 Overbought'
-            else:
-                return '⚪ Neutral'
-        
-        # Format message with rich formatting and emojis
-        action_text = ""
-        if signal_data.signal == 'BUY':
-            action_text = "✅ *ACTION: BUY WBTC on DEX*\nEntry opportunity detected!"
-        elif signal_data.signal == 'SELL':
-            action_text = "🛑 *ACTION: SELL WBTC on DEX*\nExit opportunity detected!"
-        else:
-            action_text = "📢 *ACTION: MONITOR MARKET*\nWaiting for better conditions..."
+        try:
+            # Your Telegram API key and chat ID from environment variables
+            telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
             
-        price_comparison = "💹 DEX price higher than Binance" if signal_data.spread > 0 else "📉 DEX price lower than Binance"
+            if not telegram_bot_token or not telegram_chat_id:
+                logger.warning("Telegram credentials not configured")
+                return {
+                    "success": False,
+                    "message": "Telegram credentials not configured"
+                }
             
-        message_text = f"""
-*📊 WBTC SCALP BOT ALERT 📊*
-{get_signal_emoji(signal_data.signal)}
+            # Helper functions for message formatting
+            def get_signal_emoji(signal_type):
+                signal_type = signal_type.upper() if signal_type else ""
+                if signal_type == 'BUY':
+                    return '🟢 💰 BUY SIGNAL'
+                elif signal_type == 'SELL':
+                    return '🔴 💸 SELL SIGNAL'
+                elif signal_type == 'HOLD':
+                    return '🟡 🔒 HOLD SIGNAL'
+                else:
+                    return '⚪ ⏳ WAITING'
+            
+            def get_price_action(s):
+                if s > 0:
+                    return f'📈 +{s:.2f}%'
+                elif s < 0:
+                    return f'📉 {s:.2f}%'
+                else:
+                    return f'➖ {s:.2f}%'
+            
+            def get_rsi_status(rsi_value):
+                if rsi_value <= 30:
+                    return '🟢 Oversold'
+                elif rsi_value >= 70:
+                    return '🔴 Overbought'
+                else:
+                    return '⚪ Neutral'
+            
+            # Format message with rich formatting and emojis
+            action_text = ""
+            if signal_data.signal == 'BUY':
+                action_text = "✅ *ACTION: BUY WBTC on DEX*\nEntry opportunity detected!"
+            elif signal_data.signal == 'SELL':
+                action_text = "🛑 *ACTION: SELL WBTC on DEX*\nExit opportunity detected!"
+            else:
+                action_text = "📢 *ACTION: MONITOR MARKET*\nWaiting for better conditions..."
+                
+            price_comparison = "💹 DEX price higher than Binance" if signal_data.spread > 0 else "📉 DEX price lower than Binance"
+                
+            message_text = f"""
+    *📊 WBTC SCALP BOT ALERT 📊*
+    {get_signal_emoji(signal_data.signal)}
 
-⚡ *Market Conditions*:
-• RSI: `{signal_data.rsi:.1f}` {get_rsi_status(signal_data.rsi)}
-• EMA: `{signal_data.ema:.2f}`
-• Binance BTC: `${signal_data.binance_price:.2f}`
-• DEX WBTC: `${signal_data.dex_price:.2f}`
-• Spread: {get_price_action(signal_data.spread)}
-{price_comparison}
+    ⚡ *Market Conditions*:
+    • RSI: `{signal_data.rsi:.1f}` {get_rsi_status(signal_data.rsi)}
+    • EMA: `{signal_data.ema:.2f}`
+    • Binance BTC: `${signal_data.binance_price:.2f}`
+    • DEX WBTC: `${signal_data.dex_price:.2f}`
+    • Spread: {get_price_action(signal_data.spread)}
+    {price_comparison}
 
-⏰ Signal Time: `{datetime.fromisoformat(signal_data.timestamp.replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M:%S')}`
+    ⏰ Signal Time: `{datetime.fromisoformat(signal_data.timestamp.replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M:%S')}`
 
-{action_text}
-""".strip()
-        
-        # Send Telegram message
-        telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
-        
+    {action_text}
+    """.strip()
+            
+            # Send Telegram message
+            telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+            
             async with session.post(telegram_url, json={
                 "chat_id": telegram_chat_id,
                 "text": message_text,
@@ -386,12 +386,12 @@ async def send_telegram_notification(signal_data: SignalData):
                     "message": "Telegram notification sent",
                     "response": telegram_response
                 }
-    except Exception as e:
-        logger.error(f"Error sending Telegram notification: {str(e)}")
-        return {
-            "success": False,
-            "message": f"Failed to send Telegram notification: {str(e)}"
-        }
+        except Exception as e:
+            logger.error(f"Error sending Telegram notification: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Failed to send Telegram notification: {str(e)}"
+            }
 
 # Generate initial history data
 async def generate_initial_history():
@@ -632,8 +632,8 @@ async def shutdown_event():
     # Close Binance client
     if binance_client:
         try:
-        await binance_client.close_connection()
-        logger.info("Binance client connection closed")
+            await binance_client.close_connection()
+            logger.info("Binance client connection closed")
         except Exception as e:
             logger.error(f"Error closing Binance client: {str(e)}")
     
