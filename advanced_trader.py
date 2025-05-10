@@ -10,6 +10,7 @@ import asyncio
 from typing import Dict, Any, Tuple, Optional
 from datetime import datetime
 from binance import AsyncClient
+import numpy as np  # Import numpy
 
 # Import our custom modules
 import position_sizing
@@ -20,6 +21,24 @@ import config
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# Helper function to convert numpy types to Python native types
+def convert_numpy_to_python(obj):
+    """Convert numpy data types to native Python types for JSON serialization"""
+    if isinstance(obj, dict):
+        return {k: convert_numpy_to_python(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_to_python(item) for item in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, np.ndarray):
+        return convert_numpy_to_python(obj.tolist())
+    else:
+        return obj
 
 class AdvancedTrader:
     """
@@ -326,7 +345,8 @@ class AdvancedTrader:
             "performance_metrics": self.performance_tracker.metrics
         }
         
-        return combined_result
+        # Convert NumPy types to native Python types for JSON serialization
+        return convert_numpy_to_python(combined_result)
     
     def get_performance_report(self) -> Dict[str, Any]:
         """Get comprehensive performance report"""
