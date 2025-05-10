@@ -175,38 +175,42 @@ async def fetch_binance_data():
         if not binance_client:
             await initialize_binance_client()
             if not binance_client:
-                logger.error("Could not initialize Binance client")
-                return last_binance_data
+                logger.warning("Could not initialize Binance client, using fallback data")
+                return await fetch_fallback_data()
         
-        # Get klines (candlestick data) for technical indicators
-        klines = await binance_client.get_klines(
-            symbol=TRADING_PAIR, 
-            interval=AsyncClient.KLINE_INTERVAL_5MINUTE,
-            limit=50  # Get enough data to calculate RSI and EMA
-        )
-        
-        # Extract close prices
-        close_prices = [float(k[4]) for k in klines]
-        
-        # Calculate indicators
-        current_price = close_prices[-1]
-        rsi_value = calculate_rsi(close_prices, RSI_PERIODS)
-        ema_value = calculate_ema(close_prices, EMA_PERIODS)
-        
-        # Update cache
-        last_binance_data = {
-            "price": current_price,
-            "rsi": rsi_value,
-            "ema": ema_value,
-            "last_updated": datetime.now().isoformat()
-        }
-        
-        logger.info(f"Binance data updated: Price=${current_price}, RSI={rsi_value:.2f}, EMA=${ema_value:.2f}")
-        return last_binance_data
+        try:
+            # Get klines (candlestick data) for technical indicators
+            klines = await binance_client.get_klines(
+                symbol=TRADING_PAIR, 
+                interval=AsyncClient.KLINE_INTERVAL_5MINUTE,
+                limit=50  # Get enough data to calculate RSI and EMA
+            )
+            
+            # Extract close prices
+            close_prices = [float(k[4]) for k in klines]
+            
+            # Calculate indicators
+            current_price = close_prices[-1]
+            rsi_value = calculate_rsi(close_prices, RSI_PERIODS)
+            ema_value = calculate_ema(close_prices, EMA_PERIODS)
+            
+            # Update cache
+            last_binance_data = {
+                "price": current_price,
+                "rsi": rsi_value,
+                "ema": ema_value,
+                "last_updated": datetime.now().isoformat()
+            }
+            
+            logger.info(f"Binance data updated: Price=${current_price}, RSI={rsi_value:.2f}, EMA=${ema_value:.2f}")
+            return last_binance_data
+        except Exception as binance_error:
+            logger.error(f"Error fetching from Binance API: {str(binance_error)}")
+            return await fetch_fallback_data()
     
     except Exception as e:
         logger.error(f"Error fetching Binance data: {str(e)}")
-        return last_binance_data
+        return await fetch_fallback_data()
 
 # Function to fetch DEX (PancakeSwap) price for WBTC
 async def fetch_dex_price():
@@ -297,59 +301,60 @@ def last_signal_was_buy():
 
 # Function to send Telegram notification
 async def send_telegram_notification(signal_data: SignalData):
-    session = None
-    try:
-        # Your Telegram API key and chat ID from environment variables
-        telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-        telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
-        
-        if not telegram_bot_token or not telegram_chat_id:
-            logger.warning("Telegram credentials not configured")
-            return {
-                "success": False,
-                "message": "Telegram credentials not configured"
-            }
-        
-        # Helper functions for message formatting
-        def get_signal_emoji(signal_type):
-            signal_type = signal_type.upper() if signal_type else ""
-            if signal_type == 'BUY':
-                return '🟢 💰 BUY SIGNAL'
-            elif signal_type == 'SELL':
-                return '🔴 💸 SELL SIGNAL'
-            elif signal_type == 'HOLD':
-                return '🟡 🔒 HOLD SIGNAL'
-            else:
-                return '⚪ ⏳ WAITING'
-        
-        def get_price_action(s):
-            if s > 0:
-                return f'📈 +{s:.2f}%'
-            elif s < 0:
-                return f'📉 {s:.2f}%'
-            else:
-                return f'➖ {s:.2f}%'
-        
-        def get_rsi_status(rsi_value):
-            if rsi_value <= 30:
-                return '🟢 Oversold'
-            elif rsi_value >= 70:
-                return '🔴 Overbought'
-            else:
-                return '⚪ Neutral'
-        
-        # Format message with rich formatting and emojis
-        action_text = ""
-        if signal_data.signal == 'BUY':
-            action_text = "✅ *ACTION: BUY WBTC on DEX*\nEntry opportunity detected!"
-        elif signal_data.signal == 'SELL':
-            action_text = "🛑 *ACTION: SELL WBTC on DEX*\nExit opportunity detected!"
-        else:
-            action_text = "📢 *ACTION: MONITOR MARKET*\nWaiting for better conditions..."
+    # Create a new session for each notification
+    async with aiohttp.ClientSession() as session:
+        try:
+            # Your Telegram API key and chat ID from environment variables
+            telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
             
-        price_comparison = "💹 DEX price higher than Binance" if signal_data.spread > 0 else "📉 DEX price lower than Binance"
+            if not telegram_bot_token or not telegram_chat_id:
+                logger.warning("Telegram credentials not configured")
+                return {
+                    "success": False,
+                    "message": "Telegram credentials not configured"
+                }
             
-        message_text = f"""
+            # Helper functions for message formatting
+            def get_signal_emoji(signal_type):
+                signal_type = signal_type.upper() if signal_type else ""
+                if signal_type == 'BUY':
+                    return '🟢 💰 BUY SIGNAL'
+                elif signal_type == 'SELL':
+                    return '🔴 💸 SELL SIGNAL'
+                elif signal_type == 'HOLD':
+                    return '🟡 🔒 HOLD SIGNAL'
+                else:
+                    return '⚪ ⏳ WAITING'
+            
+            def get_price_action(s):
+                if s > 0:
+                    return f'📈 +{s:.2f}%'
+                elif s < 0:
+                    return f'📉 {s:.2f}%'
+                else:
+                    return f'➖ {s:.2f}%'
+            
+            def get_rsi_status(rsi_value):
+                if rsi_value <= 30:
+                    return '🟢 Oversold'
+                elif rsi_value >= 70:
+                    return '🔴 Overbought'
+                else:
+                    return '⚪ Neutral'
+            
+            # Format message with rich formatting and emojis
+            action_text = ""
+            if signal_data.signal == 'BUY':
+                action_text = "✅ *ACTION: BUY WBTC on DEX*\nEntry opportunity detected!"
+            elif signal_data.signal == 'SELL':
+                action_text = "🛑 *ACTION: SELL WBTC on DEX*\nExit opportunity detected!"
+            else:
+                action_text = "📢 *ACTION: MONITOR MARKET*\nWaiting for better conditions..."
+                
+            price_comparison = "💹 DEX price higher than Binance" if signal_data.spread > 0 else "📉 DEX price lower than Binance"
+                
+            message_text = f"""
 *📊 WBTC SCALP BOT ALERT 📊*
 {get_signal_emoji(signal_data.signal)}
 
@@ -365,34 +370,28 @@ async def send_telegram_notification(signal_data: SignalData):
 
 {action_text}
 """.strip()
-        
-        # Send Telegram message
-        telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
-        
-        session = aiohttp.ClientSession()
-        async with session.post(telegram_url, json={
-            "chat_id": telegram_chat_id,
-            "text": message_text,
-            "parse_mode": "Markdown"
-        }) as response:
-            telegram_response = await response.json()
             
+            # Send Telegram message
+            telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+            
+            async with session.post(telegram_url, json={
+                "chat_id": telegram_chat_id,
+                "text": message_text,
+                "parse_mode": "Markdown"
+            }) as response:
+                telegram_response = await response.json()
+                
+                return {
+                    "success": True,
+                    "message": "Telegram notification sent",
+                    "response": telegram_response
+                }
+        except Exception as e:
+            logger.error(f"Error sending Telegram notification: {str(e)}")
             return {
-                "success": True,
-                "message": "Telegram notification sent",
-                "response": telegram_response
+                "success": False,
+                "message": f"Failed to send Telegram notification: {str(e)}"
             }
-    except Exception as e:
-        logger.error(f"Error sending Telegram notification: {str(e)}")
-        return {
-            "success": False,
-            "message": f"Failed to send Telegram notification: {str(e)}"
-        }
-    finally:
-        # Ensure session is closed
-        if session:
-            await session.close()
-            logger.debug("Telegram aiohttp session closed properly")
 
 # Generate initial history data
 async def generate_initial_history():
@@ -604,17 +603,10 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
-# Cleanup Binance client on shutdown
+# Cleanup on shutdown
 @app.on_event("shutdown")
 async def shutdown_event():
-    # Close any pending aiohttp connections
-    await asyncio.gather(*[
-        session.close() 
-        for session in [
-            session for session in aiohttp.ClientSession._instances 
-            if not session.closed
-        ]
-    ], return_exceptions=True)
+    global binance_client
     
     # Close Binance client
     if binance_client:
@@ -624,19 +616,11 @@ async def shutdown_event():
         except Exception as e:
             logger.error(f"Error closing Binance client: {str(e)}")
     
-    logger.info("Application shutdown complete, all connections closed")
+    logger.info("Application shutdown complete")
 
 # Startup event
 @app.on_event("startup")
 async def startup_event():
-    # Close any existing aiohttp sessions from previous runs
-    try:
-        for session in [session for session in aiohttp.ClientSession._instances if hasattr(session, 'closed') and not session.closed]:
-            await session.close()
-            logger.debug("Closed lingering aiohttp session on startup")
-    except Exception as e:
-        logger.warning(f"Error cleaning up aiohttp sessions on startup: {str(e)}")
-    
     # Initialize Binance client
     await initialize_binance_client()
     
@@ -801,59 +785,55 @@ async def get_advanced_signal():
 # Fallback data source using CoinGecko or simulated data
 async def fetch_fallback_data():
     """Fetch data from alternative source when Binance is not available"""
-    session = None
-    try:
-        # Try to get data from CoinGecko API
-        logger.info("Using CoinGecko API as fallback data source")
-        
-        session = aiohttp.ClientSession()
-        # Get current BTC price
-        async with session.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd") as response:
-            if response.status == 200:
-                data = await response.json()
-                current_price = data["bitcoin"]["usd"]
-                
-                # Get historical data for RSI and EMA calculation
-                days_ago = int(time.time()) - (86400 * 2)  # 2 days of data
-                url = f"https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from={days_ago}&to={int(time.time())}"
-                
-                async with session.get(url) as hist_response:
-                    if hist_response.status == 200:
-                        hist_data = await hist_response.json()
-                        prices = [price[1] for price in hist_data["prices"]]
-                        
-                        # Sample to simulate 5-minute data
-                        sampled_prices = prices[-50:]
-                        
-                        # Calculate indicators
-                        rsi_value = calculate_rsi(sampled_prices, RSI_PERIODS)
-                        ema_value = calculate_ema(sampled_prices, EMA_PERIODS)
-                        
-                        # Update cache
-                        updated_data = {
-                            "price": current_price,
-                            "rsi": rsi_value,
-                            "ema": ema_value,
-                            "last_updated": datetime.now().isoformat(),
-                            "data_source": "CoinGecko"
-                        }
-                        
-                        last_binance_data.update(updated_data)
-                        logger.info(f"CoinGecko data fetched: Price=${current_price}, RSI={rsi_value:.2f}, EMA=${ema_value:.2f}")
-                        return last_binance_data
-        
-        # If CoinGecko fails, use simulation
-        logger.warning("CoinGecko API failed, using simulation")
-        return generate_simulated_data()
     
-    except Exception as e:
-        logger.error(f"Error fetching fallback data: {str(e)}")
-        return generate_simulated_data()
-    finally:
-        # Ensure session is closed
-        if session:
-            await session.close()
-            logger.debug("CoinGecko aiohttp session closed properly")
+    # Use a new session for each request and ensure it's closed properly
+    async with aiohttp.ClientSession() as session:
+        try:
+            # Try to get data from CoinGecko API
+            logger.info("Using CoinGecko API as fallback data source")
+            
+            # Get current BTC price
+            async with session.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    current_price = data["bitcoin"]["usd"]
+                    
+                    # Get historical data for RSI and EMA calculation
+                    days_ago = int(time.time()) - (86400 * 2)  # 2 days of data
+                    url = f"https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from={days_ago}&to={int(time.time())}"
+                    
+                    async with session.get(url) as hist_response:
+                        if hist_response.status == 200:
+                            hist_data = await hist_response.json()
+                            prices = [price[1] for price in hist_data["prices"]]
+                            
+                            # Sample to simulate 5-minute data
+                            sampled_prices = prices[-50:]
+                            
+                            # Calculate indicators
+                            rsi_value = calculate_rsi(sampled_prices, RSI_PERIODS)
+                            ema_value = calculate_ema(sampled_prices, EMA_PERIODS)
+                            
+                            # Update cache
+                            updated_data = {
+                                "price": current_price,
+                                "rsi": rsi_value,
+                                "ema": ema_value,
+                                "last_updated": datetime.now().isoformat(),
+                                "data_source": "CoinGecko"
+                            }
+                            
+                            last_binance_data.update(updated_data)
+                            logger.info(f"CoinGecko data fetched: Price=${current_price}, RSI={rsi_value:.2f}, EMA=${ema_value:.2f}")
+                            return last_binance_data
+            
+            # If CoinGecko fails, use simulation
+            logger.warning("CoinGecko API failed, using simulation")
+            return generate_simulated_data()
+        
+        except Exception as e:
+            logger.error(f"Error fetching fallback data: {str(e)}")
+            return generate_simulated_data()
 
 # Run the server
 if __name__ == "__main__":
