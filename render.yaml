@@ -1,0 +1,75 @@
+services:
+  # API server service
+  - type: web
+    name: wbtc-scalp-bot-api
+    env: python
+    region: ohio
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python api_server.py
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: SIMULATION_MODE
+        value: true
+      - key: AUTO_TRADING
+        value: false
+      - key: BINANCE_API_KEY
+        sync: false
+      - key: BINANCE_API_SECRET
+        sync: false
+      - key: WALLET_PRIVATE_KEY
+        sync: false
+      - key: WALLET_ADDRESS
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: BSC_NODE_URL
+        value: https://bsc-dataseed.binance.org/
+      - key: DYNAMIC_POSITION_SIZING
+        value: true
+      - key: TRACK_PERFORMANCE
+        value: true
+      - key: TIMEFRAMES
+        value: 5m,15m,1h
+    healthCheckPath: /api/status
+    autoDeploy: true
+
+  # Trading bot worker (optional - uncomment to enable auto-trading)
+  # - type: worker
+  #   name: wbtc-scalp-bot-trader
+  #   env: python
+  #   region: ohio
+  #   plan: starter
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: python bot.py
+  #   envVars:
+  #     - key: SIMULATION_MODE
+  #       value: true
+  #     - key: AUTO_TRADING
+  #       value: true
+  #     - key: BINANCE_API_KEY
+  #       sync: false
+  #     - key: BINANCE_API_SECRET
+  #       sync: false
+  #     - key: WALLET_PRIVATE_KEY
+  #       sync: false
+  #     - key: WALLET_ADDRESS
+  #       sync: false
+  #     - key: TELEGRAM_BOT_TOKEN
+  #       sync: false
+  #     - key: TELEGRAM_CHAT_ID
+  #       sync: false
+  #     - key: BSC_NODE_URL
+  #       value: https://bsc-dataseed.binance.org/
+  #     - key: DASHBOARD_API_URL
+  #       value: http://localhost:5000/api/update-bot-data
+  #     - key: DYNAMIC_POSITION_SIZING
+  #       value: true
+  #     - key: TRACK_PERFORMANCE
+  #       value: true
+  #     - key: TIMEFRAMES
+  #       value: 5m,15m,1h
+  #   autoDeploy: true 
