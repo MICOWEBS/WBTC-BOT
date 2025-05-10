@@ -297,6 +297,7 @@ def last_signal_was_buy():
 
 # Function to send Telegram notification
 async def send_telegram_notification(signal_data: SignalData):
+    session = None
     try:
         # Your Telegram API key and chat ID from environment variables
         telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -368,25 +369,30 @@ async def send_telegram_notification(signal_data: SignalData):
         # Send Telegram message
         telegram_url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
         
-        async with aiohttp.ClientSession() as session:
-            async with session.post(telegram_url, json={
-                "chat_id": telegram_chat_id,
-                "text": message_text,
-                "parse_mode": "Markdown"
-            }) as response:
-                telegram_response = await response.json()
-                
-                return {
-                    "success": True,
-                    "message": "Telegram notification sent",
-                    "response": telegram_response
-                }
+        session = aiohttp.ClientSession()
+        async with session.post(telegram_url, json={
+            "chat_id": telegram_chat_id,
+            "text": message_text,
+            "parse_mode": "Markdown"
+        }) as response:
+            telegram_response = await response.json()
+            
+            return {
+                "success": True,
+                "message": "Telegram notification sent",
+                "response": telegram_response
+            }
     except Exception as e:
         logger.error(f"Error sending Telegram notification: {str(e)}")
         return {
             "success": False,
             "message": f"Failed to send Telegram notification: {str(e)}"
         }
+    finally:
+        # Ensure session is closed
+        if session:
+            await session.close()
+            logger.debug("Telegram aiohttp session closed properly")
 
 # Generate initial history data
 async def generate_initial_history():
@@ -554,10 +560,10 @@ async def test_telegram():
         # Create test signal data
         signal_data = SignalData(
             signal="BUY",
-            binance_price=last_binance_data["price"],
-            dex_price=last_binance_data["price"] * 0.99,  # Simulate 1% lower price on DEX
+            binance_price=last_binance_data.get("price", 40000),
+            dex_price=last_binance_data.get("price", 40000) * 0.99,  # Simulate 1% lower price on DEX
             rsi=28.5,  # Oversold
-            ema=last_binance_data["ema"],
+            ema=last_binance_data.get("ema", 40000 * 0.98),
             spread=-1.0,  # 1% discount on DEX
             timestamp=datetime.now().isoformat()
         )
@@ -601,13 +607,36 @@ async def websocket_endpoint(websocket: WebSocket):
 # Cleanup Binance client on shutdown
 @app.on_event("shutdown")
 async def shutdown_event():
+    # Close any pending aiohttp connections
+    await asyncio.gather(*[
+        session.close() 
+        for session in [
+            session for session in aiohttp.ClientSession._instances 
+            if not session.closed
+        ]
+    ], return_exceptions=True)
+    
+    # Close Binance client
     if binance_client:
-        await binance_client.close_connection()
-        logger.info("Binance client connection closed")
+        try:
+            await binance_client.close_connection()
+            logger.info("Binance client connection closed")
+        except Exception as e:
+            logger.error(f"Error closing Binance client: {str(e)}")
+    
+    logger.info("Application shutdown complete, all connections closed")
 
 # Startup event
 @app.on_event("startup")
 async def startup_event():
+    # Close any existing aiohttp sessions from previous runs
+    try:
+        for session in [session for session in aiohttp.ClientSession._instances if hasattr(session, 'closed') and not session.closed]:
+            await session.close()
+            logger.debug("Closed lingering aiohttp session on startup")
+    except Exception as e:
+        logger.warning(f"Error cleaning up aiohttp sessions on startup: {str(e)}")
+    
     # Initialize Binance client
     await initialize_binance_client()
     
@@ -616,6 +645,8 @@ async def startup_event():
     
     # Start background task
     asyncio.create_task(periodic_signal_update())
+    
+    logger.info("Application startup complete")
 
 # Initialize advanced trader
 advanced_trader_instance = None
@@ -767,8 +798,78 @@ async def get_advanced_signal():
             content={"error": f"Failed to get advanced signal: {str(e)}"}
         )
 
+# Fallback data source using CoinGecko or simulated data
+async def fetch_fallback_data():
+    """Fetch data from alternative source when Binance is not available"""
+    session = None
+    try:
+        # Try to get data from CoinGecko API
+        logger.info("Using CoinGecko API as fallback data source")
+        
+        session = aiohttp.ClientSession()
+        # Get current BTC price
+        async with session.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd") as response:
+            if response.status == 200:
+                data = await response.json()
+                current_price = data["bitcoin"]["usd"]
+                
+                # Get historical data for RSI and EMA calculation
+                days_ago = int(time.time()) - (86400 * 2)  # 2 days of data
+                url = f"https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=usd&from={days_ago}&to={int(time.time())}"
+                
+                async with session.get(url) as hist_response:
+                    if hist_response.status == 200:
+                        hist_data = await hist_response.json()
+                        prices = [price[1] for price in hist_data["prices"]]
+                        
+                        # Sample to simulate 5-minute data
+                        sampled_prices = prices[-50:]
+                        
+                        # Calculate indicators
+                        rsi_value = calculate_rsi(sampled_prices, RSI_PERIODS)
+                        ema_value = calculate_ema(sampled_prices, EMA_PERIODS)
+                        
+                        # Update cache
+                        updated_data = {
+                            "price": current_price,
+                            "rsi": rsi_value,
+                            "ema": ema_value,
+                            "last_updated": datetime.now().isoformat(),
+                            "data_source": "CoinGecko"
+                        }
+                        
+                        last_binance_data.update(updated_data)
+                        logger.info(f"CoinGecko data fetched: Price=${current_price}, RSI={rsi_value:.2f}, EMA=${ema_value:.2f}")
+                        return last_binance_data
+        
+        # If CoinGecko fails, use simulation
+        logger.warning("CoinGecko API failed, using simulation")
+        return generate_simulated_data()
+    
+    except Exception as e:
+        logger.error(f"Error fetching fallback data: {str(e)}")
+        return generate_simulated_data()
+    finally:
+        # Ensure session is closed
+        if session:
+            await session.close()
+            logger.debug("CoinGecko aiohttp session closed properly")
+
 # Run the server
 if __name__ == "__main__":
     # Use environment variable for port or default to 5000
     port = int(os.getenv("PORT", 5000))
-    uvicorn.run("api_server:app", host="0.0.0.0", port=port, reload=True) 
+    
+    # Configure server with proper lifecycle management
+    config = uvicorn.Config(
+        "api_server:app", 
+        host="0.0.0.0", 
+        port=port,
+        log_level="info",
+        reload=True,
+        loop="asyncio"
+    )
+    
+    # Run with proper signal handling
+    server = uvicorn.Server(config)
+    server.run() 
